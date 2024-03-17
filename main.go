@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -43,7 +45,7 @@ var tasks = map[string]Task{
 
 // Ниже напишите обработчики для каждого эндпоинта
 // ...
-func taskList(w http.ResponseWriter, r *http.Request) {
+func getTasks(w http.ResponseWriter, r *http.Request) {
 	resp, err := json.Marshal(tasks)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -55,7 +57,7 @@ func taskList(w http.ResponseWriter, r *http.Request) {
 	w.Write(resp)
 }
 
-func taskSending(w http.ResponseWriter, r *http.Request) {
+func createTask(w http.ResponseWriter, r *http.Request) {
 	var task Task
 	var buf bytes.Buffer
 
@@ -70,17 +72,51 @@ func taskSending(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	_, ok := tasks[task.ID]
+	if ok {
+		http.Error(w, "Задача с таким идентификатором уже существует", http.StatusBadRequest)
+		return
+	}
+
+	if task.ID == "0" {
+		//Поиск максимального по величине значения ключа. Спорно весьма, скорее заглушка.
+		var maxNumber int
+		for s := range tasks {
+			n, err := strconv.Atoi(s)
+			if err != nil {
+				panic(err)
+			}
+			if n > maxNumber {
+				maxNumber = n
+			}
+		}
+		task.ID = strconv.Itoa(maxNumber + 1)
+	}
+
+	if task.Description == "" {
+		task.Description = "Описание задачи не задано"
+	}
+
+	if task.Note == "" {
+		task.Note = "отсутствует"
+	}
+
+	if len(task.Applications) == 0 {
+		ua := strings.Split(r.Header.Get("User-Agent"), "/")
+		task.Applications = append(task.Applications, ua[0])
+	}
+
 	tasks[task.ID] = task
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 }
 
-func taskRecieveById(w http.ResponseWriter, r *http.Request) {
+func getTask(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	task, ok := tasks[id]
 	if !ok {
-		http.Error(w, "Задача не найдена", http.StatusNoContent)
+		http.Error(w, "Задача не найдена", http.StatusBadRequest)
 		return
 	}
 
@@ -95,15 +131,18 @@ func taskRecieveById(w http.ResponseWriter, r *http.Request) {
 	w.Write(resp)
 }
 
-func taskDeleteById(w http.ResponseWriter, r *http.Request) {
+func deleteTask(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	_, ok := tasks[id]
 	if !ok {
-		http.Error(w, "Задача не существует", http.StatusNoContent)
+		http.Error(w, "Задача не существует", http.StatusBadRequest)
 		return
 	}
-	delete(tasks, "id")
+	delete(tasks, id)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
 }
 
 func main() {
@@ -111,11 +150,11 @@ func main() {
 
 	// здесь регистрируйте ваши обработчики
 	// ...
-	r.Get("/tasks", taskList)
-	r.Post("/tasks", taskSending)
+	r.Get("/tasks", getTasks)
+	r.Post("/tasks", createTask)
 	r.Route("/tasks/{id}", func(r chi.Router) {
-		r.Get("/", taskRecieveById)
-		r.Delete("/", taskDeleteById)
+		r.Get("/", getTask)
+		r.Delete("/", deleteTask)
 	})
 
 	if err := http.ListenAndServe(":8080", r); err != nil {
